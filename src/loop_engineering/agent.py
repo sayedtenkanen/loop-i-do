@@ -27,8 +27,8 @@ class Agent:
         connectors: ConnectorRegistry | None = None,
         max_tokens: int = 2048,
         dry_run: bool | None = None,
-        timeout: float = 60.0,
-        max_retries: int = 3,
+        timeout: float = 30.0,
+        max_retries: int = 2,
     ):
         self.system_prompt = system_prompt
         self.model = model

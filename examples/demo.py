@@ -49,16 +49,21 @@ def main() -> None:
         checker_system_prompt="You review test fixes for correctness.",
         connectors=registry,
     )
+    print("\nRunning MakerChecker...")
     draft, review = mc.run("Fix the flaky test in test/auth/test_login.py")
     print("\nmaker draft:", draft[:200] + "..." if len(draft) > 200 else draft)
     print("checker verdict approved:", review.approved)
     print("checker notes:", review.notes[:200] + "..." if len(review.notes) > 200 else review.notes)
 
-    goal = GoalLoop(worker_system_prompt="You write code to satisfy a goal.", connectors=registry)
+    print("\nRunning GoalLoop (2 iterations)...")
+    goal = GoalLoop(
+        worker_system_prompt="You write code to satisfy a goal.",
+        connectors=registry,
+    )
     result = goal.run(
         goal="Make all tests in test/auth pass and lint clean",
         stop_condition="all tests in test/auth pass and lint is clean",
-        max_iterations=3,
+        max_iterations=2,
     )
     print("\ngoal loop transcript:", result[:300] + "..." if len(result) > 300 else result)
 
