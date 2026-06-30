@@ -1,101 +1,69 @@
-# Loop Engineering System
+# Loop Engineering
 
-A Python-based system for orchestrating AI agents through automated loops, implementing the concepts from Addy Osmani's "Loop Engineering" article.
+A Python package for automated AI agent orchestration with task loops, verification, and memory.
 
-## Overview
+## Installation
 
-This system replaces manual prompting of AI agents with designed systems that automatically discover work, implement solutions, verify results, and manage state across sessions.
-
-## Architecture Components
-
-### 1. Orchestration Layer (`orchestration/`)
-Central control system managing workflows, state transitions, and component coordination.
-
-### 2. Automations Scheduler (`automations/`)
-Time-based and event-based trigger system for loop execution.
-
-### 3. Memory Layer (`memory/`)
-Persistent state storage between loop runs, maintaining context across sessions.
-
-### 4. Skills Engine (`skills/`)
-Store and retrieve project-specific knowledge, conventions, and instructions for agents.
-
-### 5. Worktrees Manager (`worktrees/`)
-Provide isolated workspaces for parallel agent execution to prevent conflicts.
-
-### 6. Agent Registry (`agents/`)
-Manage different agent types with specific roles and capabilities.
-
-### 7. Plugins Manager (`plugins/`)
-Integrate with external tools and services via Model Context Protocol (MCP).
+```bash
+pip install loop-engineering
+```
 
 ## Quick Start
 
 ```python
-from docs.orchestration import LoopOrchestrator, LoopConfig, LoopDefinition
-from docs.memory import MemoryLayer
-from docs.automations import AutomationScheduler
+from loop_engineering import Agent, AgentConfig, Loop, Verifier
 
-# Initialize components
-config = LoopConfig()
-memory = MemoryLayer(config.memory.backend)
-scheduler = AutomationScheduler(memory)
-orchestrator = LoopOrchestrator(config)
+# Configure agent
+config = AgentConfig(model="gpt-4o-mini", temperature=0.3)
+agent = Agent(name="my-agent", config=config)
+verifier = Verifier()
 
-# Define a loop
-loop_def = LoopDefinition(
-    id="daily-code-quality",
-    description="Automated code quality checks and fixes",
-    discovery_task="Analyze codebase for quality issues",
-    verification_criteria={"tests_pass": True, "lint_clean": True}
+# Create and run loop
+loop = Loop(
+    name="my-loop",
+    task="Write a Python function to calculate factorial",
+    agent=agent,
+    verifier=verifier,
 )
 
-# Run the loop
-await orchestrator.run_loop(loop_def)
+result = loop.execute()
+print(f"Success: {result.success}")
+print(f"Attempts: {result.attempts}")
 ```
 
-## Key Features
+## Features
 
-- **Automated Discovery**: Agents automatically find and prioritize work
-- **Isolated Execution**: Worktrees prevent parallel agent conflicts
-- **Persistent State**: Memory layer maintains context across runs
-- **Role-Based Agents**: Specialized agents for exploration, implementation, and verification
-- **Plugin System**: Extensible integration with external tools
-- **Skills System**: Project-specific knowledge for informed decision making
+- **Agent**: Configurable AI agent with LLM integration
+- **Loop**: Orchestrates multiple attempts with retries
+- **Verifier**: Validates agent outputs
+- **TokenTracker**: Monitors token usage and budgets
+- **MemoryLayer**: Persists loop state to SQLite
 
-## Configuration
+## Examples
 
-See `docs/config/loop_config.yaml` for configuration options and `docs/config/schema.py` for validation schemas.
+See the `examples/` directory for complete examples:
 
-## Directory Structure
-
-```
-loop-it-do/
-├── README.md
-└── docs/
-    ├── README.md
-    ├── orchestration/
-    ├── automations/
-    ├── memory/
-    ├── skills/
-    ├── worktrees/
-    ├── agents/
-    ├── plugins/
-    └── config/
-```
+- `auto_fix_issues.py` - Auto-fix code errors
+- `code_quality.py` - Code quality review
+- `pr_review.py` - PR review automation
 
 ## Development
 
-Each component is implemented as a Python module with:
-- Type hints and dataclasses for type safety
-- Async/await for non-blocking operations
-- Comprehensive error handling
-- Example usage and documentation
+```bash
+# Install dev dependencies
+pip install -e ".[dev]"
 
-## Next Steps
+# Run tests
+pytest tests/ -v
 
-1. Implement production-ready storage backends
-2. Add monitoring and metrics collection
-3. Create deployment configurations
-4. Write comprehensive tests
-5. Add integration with popular AI frameworks
+# Run linting
+ruff check src/ tests/
+ruff format --check src/ tests/
+
+# Run type checking
+mypy src/
+```
+
+## License
+
+MIT
