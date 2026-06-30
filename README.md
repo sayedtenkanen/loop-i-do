@@ -10,17 +10,17 @@ instead. Each module maps to one of the six building blocks.
 | 1. Automations         | `automation.py`         | Scheduled triage that writes findings to Memory; runs that find nothing archive themselves. |
 | 2. Worktrees            | `worktrees.py`           | `git worktree` wrapper so parallel agents never touch the same checkout. |
 | 3. Skills               | `skills.py`              | Loads `SKILL.md` folders, matches one to a task by keyword overlap. |
-| 4. Plugins / connectors | `connectors.py`          | Registry of Python callables exposed as Anthropic tool-use tools. |
+| 4. Plugins / connectors | `connectors.py`          | Registry of Python callables exposed as OpenAI-compatible tool-use tools. |
 | 5. Sub-agents            | `subagents.py`, `goal.py`| Maker/checker split — a separate model reviews the draft (`MakerChecker`), or judges whether a goal's stop condition holds (`GoalLoop`, the `/goal` primitive). |
 | 6. Memory (the spine)   | `memory.py`              | JSON-backed state that survives between runs — swap for a markdown file or a Linear board. |
-| engine                  | `agent.py`               | Tool-use loop wrapper around the Anthropic Messages API. |
+| engine                  | `agent.py`               | Tool-use loop wrapper around the OpenAI-compatible API (OpenCode Zen). |
 | orchestrator            | `loop.py`                | Wires all six together into the "what one loop looks like" shape from the article. |
 
 ## Quick start
 
 ```bash
-pip install anthropic
-export ANTHROPIC_API_KEY=sk-ant-...   # omit this to run everything in dry-run mode
+pip install loop-engineering
+export OPENCODE_ZEN_API_KEY=your_key   # omit this to run everything in dry-run mode
 python examples/demo.py
 ```
 

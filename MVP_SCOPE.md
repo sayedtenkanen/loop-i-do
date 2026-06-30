@@ -9,45 +9,43 @@ Get 10 users who run at least one loop and give feedback.
 ### Core Loop (Week 1-2)
 
 ```python
-# This is the ENTIRE MVP
-from loop_engineering import Loop, Agent, Verifier
+from loop_engineering import Loop, Agent, ConnectorRegistry
 
 # Define a simple loop
 loop = Loop(
     name="fix-github-issues",
-    agent=Agent(model="gpt-4o"),
-    verifier=Verifier(model="gpt-4o"),
+    agent=Agent(model="nemotron-3-ultra-free"),
+    connectors=ConnectorRegistry(),
     task="Find and fix open GitHub issues",
-    verify=["tests_pass", "lint_clean"]
 )
 
 # Run it
-loop.run()
+loop.tick()
 ```
 
 ### What's Included
 
-| Feature | Status | Effort |
+| Feature | Status | Module |
 |---------|--------|--------|
-| Basic loop execution | ✅ Built | Done |
-| Token counting | ✅ Built | Done |
-| Single agent | ✅ Built | Done |
-| Single verifier | ✅ Built | Done |
-| YAML config | ✅ Built | Done |
-| SQLite state | ✅ Built | Done |
+| Agent with tool-use loop | ✅ Built | `agent.py` |
+| Automations (scheduled triage) | ✅ Built | `automation.py` |
+| Worktrees (git isolation) | ✅ Built | `worktrees.py` |
+| Skills (SKILL.md matching) | ✅ Built | `skills.py` |
+| Connectors (plugin/tool registry) | ✅ Built | `connectors.py` |
+| Sub-agents (MakerChecker) | ✅ Built | `subagents.py` |
+| GoalLoop (/goal primitive) | ✅ Built | `goal.py` |
+| Memory (JSON-backed state) | ✅ Built | `memory.py` |
+| Debug logging | ✅ Built | `debug.py` |
+| Auto skill loading | ✅ Built | `agent.py` |
 
 ### What's NOT Included (Cut These)
 
 | Feature | Reason | When |
 |---------|--------|------|
-| Worktrees | Complexity | V1 |
-| Multiple agents | Complexity | V1 |
-| Skills system | Not validated | V1 |
-| PR creation | Not validated | V1 |
-| Notifications | Nice to have | V1 |
 | Dashboard | Not needed | V2 |
 | SSO | Enterprise only | V2 |
 | K8s deployment | Too early | V2 |
+| Notification system | Nice to have | V1 |
 
 ---
 
@@ -188,5 +186,5 @@ loop.run()
 
 ---
 
-*Plan created: $(date)*
+*Plan created: 2026-06-30*
 *Review after Week 2*

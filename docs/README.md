@@ -1,55 +1,34 @@
-# Loop Engineering Architecture Blueprint
+# Loop Engineering - Blueprint Documentation
 
-A Python-based system for orchestrating AI agents through automated loops, replacing manual prompting with designed systems.
+This directory contains early architecture blueprints and design documents.
+The actual implementation is in `src/loop_engineering/`.
 
-## Overview
-
-This architecture implements the five building blocks from Addy Osmani's "Loop Engineering" article:
-
-1. **Automations** - Time-based and event-based trigger system
-2. **Worktrees** - Isolated workspaces for parallel agent execution
-3. **Skills** - Project-specific knowledge storage for agents
-4. **Plugins/Connectors** - Integration with external tools via MCP
-5. **Sub-agents** - Role-based agent orchestration
-6. **Memory** - Persistent state management between runs
-
-## Directory Structure
+## Actual Implementation
 
 ```
-docs/
-├── README.md                    # This file
-├── orchestration/               # Central control system
-├── automations/                 # Scheduling system
-├── memory/                      # State management
-├── skills/                      # Knowledge storage
-├── worktrees/                   # Isolation layer
-├── agents/                      # Agent registry and types
-├── plugins/                     # External integrations
-└── config/                      # Configuration management
+src/loop_engineering/
+├── __init__.py          # Package exports
+├── agent.py             # Tool-use loop wrapper (OpenAI SDK, OpenCode Zen)
+├── automation.py        # Scheduled triage with skill-based routing
+├── connectors.py        # Plugin/tool registry (OpenAI function calling)
+├── debug.py             # Debug logging module
+├── goal.py              # GoalLoop - /goal primitive (worker + judge)
+├── loop.py              # Orchestrator wiring all components
+├── memory.py            # JSON-backed state (thread-safe)
+├── skills.py            # SKILL.md folder matching
+├── subagents.py         # MakerChecker + ReviewResult
+└── worktrees.py         # Git worktree isolation
 ```
 
-## Implementation Approach
+## Skills
 
-- **Framework**: Uses existing Python frameworks (LangChain, CrewAI, APScheduler)
-- **Architecture**: Modular design with clear interfaces between components
-- **State Management**: Persistent storage with SQLite/Redis/PostgreSQL backends
-- **Isolation**: Git worktrees or temporary directories for parallel execution
-- **Monitoring**: Structured logging and metrics collection
-
-## Key Interfaces
-
-Each component exposes clean interfaces for integration:
-
-```python
-# Example usage
-orchestrator = LoopOrchestrator(config)
-await orchestrator.run_loop(loop_definition)
+```
+skills/
+├── agentic-coding-loop/SKILL.md    # Fast loop for iterative coding
+├── developer-feedback-loop/SKILL.md # Human review and steering
+├── external-feedback-loop/SKILL.md  # User feedback and A/B testing
+├── flaky-test/SKILL.md             # Flaky test triage
+└── glm-agentic-coding/SKILL.md     # GLM-5.2 model usage
 ```
 
-## Next Steps
-
-1. Review component-specific documentation in each directory
-2. Implement core orchestration layer
-3. Add memory and automation systems
-4. Integrate agent types and skills engine
-5. Add monitoring and production hardening
+## For the actual package documentation, see the root `README.md`.
