@@ -1,0 +1,117 @@
+# Loop Engineering Configuration
+
+orchestration:
+  max_concurrent_loops: 5
+  default_timeout: 3600
+  retry_attempts: 3
+  enable_monitoring: true
+  log_level: "INFO"
+
+memory:
+  backend: "sqlite"
+  connection_string: "sqlite:///loop_state.db"
+  cache_ttl: 300
+  backup_enabled: true
+  backup_interval: 3600
+
+scheduler:
+  backend: "apscheduler"
+  max_workers: 10
+  check_interval: 60
+  enable_event_triggers: true
+
+agents:
+  explorer:
+    model: "gpt-4-mini"
+    temperature: 0.1
+    max_tokens: 1000
+    timeout: 120
+    retry_attempts: 2
+    tools:
+      - "read_file"
+      - "search_code"
+      - "analyze_dependencies"
+  
+  implementer:
+    model: "gpt-4"
+    temperature: 0.3
+    max_tokens: 4000
+    timeout: 300
+    retry_attempts: 3
+    tools:
+      - "write_file"
+      - "edit_file"
+      - "run_tests"
+      - "create_commit"
+  
+  verifier:
+    model: "gpt-4"
+    temperature: 0.0
+    max_tokens: 2000
+    timeout: 180
+    retry_attempts: 2
+    tools:
+      - "run_tests"
+      - "lint_code"
+      - "check_security"
+      - "verify_dependencies"
+  
+  triage:
+    model: "gpt-4-mini"
+    temperature: 0.2
+    max_tokens: 1000
+    timeout: 60
+    retry_attempts: 1
+    tools:
+      - "read_issues"
+      - "analyze_logs"
+      - "classify_priority"
+
+worktrees:
+  base_path: "./worktrees"
+  auto_cleanup: true
+  max_age_hours: 24
+  max_concurrent: 10
+  cleanup_interval: 3600
+
+plugins:
+  directory: "./plugins"
+  enabled:
+    - "github"
+    - "linear"
+    - "slack"
+  auto_load: true
+  hot_reload: false
+
+skills:
+  directory: "./skills"
+  auto_discover: true
+  cache_skills: true
+  max_skill_size: 1048576  # 1MB
+
+monitoring:
+  enable_metrics: true
+  metrics_port: 9090
+  enable_tracing: true
+  trace_sample_rate: 0.1
+  enable_logging: true
+  log_format: "json"
+
+security:
+  enable_secrets_management: true
+  secrets_backend: "env"
+  enable_audit_logging: true
+  max_concurrent_agents: 20
+
+performance:
+  enable_connection_pooling: true
+  max_pool_size: 20
+  enable_caching: true
+  cache_backend: "redis"
+  cache_connection_string: "redis://localhost:6379"
+
+development:
+  debug_mode: false
+  enable_profiling: false
+  profiling_output: "./profiles"
+  enable_hot_reloading: false
