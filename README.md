@@ -1,4 +1,4 @@
-# loop_engineering
+# Loop I(t) Do
 
 A Python implementation of the pattern from Addy Osmani's
 ["Loop Engineering"](https://addyo.substack.com/p/loop-engineering):
