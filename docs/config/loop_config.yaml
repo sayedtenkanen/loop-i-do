@@ -134,9 +134,53 @@ monitoring:
 
 security:
   enable_secrets_management: true
-  secrets_backend: "env"
+  secrets_backend: "env"  # env, file, vault, aws
   enable_audit_logging: true
   max_concurrent_agents: 20
+  
+  # Prompt injection defense
+  injection_protection:
+    enabled: true
+    block_on_detection: true
+    log_attempts: true
+  
+  # Code execution sandboxing
+  sandbox:
+    enabled: true
+    timeout_seconds: 30
+    max_memory_mb: 256
+    blocked_modules:
+      - "subprocess"
+      - "os"
+      - "sys"
+      - "shutil"
+      - "socket"
+      - "http"
+      - "requests"
+  
+  # Input/output filtering
+  io_filtering:
+    redact_secrets: true
+    redact_pii: true
+    redact_internal_paths: true
+    max_input_length: 10000
+  
+  # Access control
+  access_control:
+    enabled: true
+    default_policy: "read_only"
+    require_auth: true
+  
+  # Network security
+  network:
+    allowed_domains:
+      - "api.openai.com"
+      - "api.anthropic.com"
+      - "github.com"
+      - "api.github.com"
+    blocked_ips:
+      - "0.0.0.0"
+    rate_limit_per_minute: 60
 
 performance:
   enable_connection_pooling: true
