@@ -1,0 +1,246 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6am UTC
+
+jobs:
+  bandit:
+    name: Bandit Security Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install bandit
+        run: pip install bandit[toml]>=1.7.0
+
+      - name: Run bandit
+        run: bandit -r src/ -f json -o bandit-report.json --severity-level medium || true
+
+      - name: Display results
+        if: always()
+        run: bandit -r src/ --severity-level medium
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  secret-detection:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for gitleaks
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: detect-secrets
+        run: |
+          pip install detect-secrets>=1.4.0
+          detect-secrets scan --all-files --exclude-files '\.venv/' -o secrets-report.json || true
+          echo "=== Secrets Report ==="
+          cat secrets-report.json | python -m json.tool
+          if [ "$(python -c "import json; d=json.load(open('secrets-report.json')); print(len(d.get('results', {})))")" != "0" ]; then
+            echo "::warning::Potential secrets detected. Review secrets-report.json"
+          fi
+
+      - name: Check for hardcoded API keys
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          grep -rn "sk-\|api_key\s*=\s*['\"]\|password\s*=\s*['\"]\|secret\s*=\s*['\"]" src/ --include="*.py" || echo "No hardcoded secrets found"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secrets-report
+          path: secrets-report.json
+
+  dependency-audit:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[security]"
+
+      - name: Run pip-audit
+        run: |
+          pip-audit --format=json --output=pip-audit-report.json || true
+          echo "=== pip-audit Results ==="
+          pip-audit
+
+      - name: Check for known vulnerabilities
+        run: |
+          pip install safety>=2.3.0
+          safety check --json --output safety-report.json || true
+          echo "=== Safety Results ==="
+          safety check
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-reports
+          path: |
+            pip-audit-report.json
+            safety-report.json
+
+  sast:
+    name: Static Application Security Testing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install tools
+        run: |
+          pip install bandit[toml]>=1.7.0
+          pip install semgrep>=1.50.0
+
+      - name: Run bandit with all tests
+        run: |
+          bandit -r src/ -ll  # Only medium and high severity
+          echo "=== Bandit Summary ==="
+          bandit -r src/ -f json | python -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          metrics = data.get('metrics', {}).get('_totals', {})
+          print(f\"High severity: {metrics.get('SEVERITY.HIGH', 0)}\")
+          print(f\"Medium severity: {metrics.get('SEVERITY.MEDIUM', 0)}\")
+          print(f\"Low severity: {metrics.get('SEVERITY.LOW', 0)}\")
+          "
+
+      - name: Check for dangerous functions
+        run: |
+          echo "Checking for dangerous function usage..."
+          grep -rn "eval\|exec\|__import__\|subprocess\.call\|os\.system\|pickle\.load\|yaml\.load" src/ --include="*.py" || echo "No dangerous functions found"
+
+      - name: Check for insecure random
+        run: |
+          echo "Checking for insecure random number generation..."
+          grep -rn "import random\|from random import" src/ --include="*.py" | grep -v "test" || echo "No insecure random found (or only in tests)"
+
+      - name: Check for SQL injection risks
+        run: |
+          echo "Checking for potential SQL injection..."
+          grep -rn "execute.*%\|execute.*f\"\|execute.*format\|execute.*+" src/ --include="*.py" || echo "No SQL injection risks found"
+
+  pentest-checks:
+    name: Pentest Simulation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install tools
+        run: pip install bandit[toml]>=1.7.0
+
+      - name: Check for path traversal
+        run: |
+          echo "Checking for path traversal vulnerabilities..."
+          grep -rn "\.\./\|os\.path\.join.*\.\." src/ --include="*.py" | grep -v "test" || echo "No path traversal risks found"
+
+      - name: Check for command injection
+        run: |
+          echo "Checking for command injection risks..."
+          grep -rn "subprocess\.\|os\.popen\|os\.system" src/ --include="*.py" | grep -v "test" || echo "No command injection risks found"
+
+      - name: Check for SSRF risks
+        run: |
+          echo "Checking for SSRF risks..."
+          grep -rn "requests\.\|urllib\.\|http\.client" src/ --include="*.py" | grep -v "test" || echo "No SSRF risks found"
+
+      - name: Check for unsafe deserialization
+        run: |
+          echo "Checking for unsafe deserialization..."
+          grep -rn "pickle\.load\|yaml\.load\|yaml\.unsafe_load\|marshal\.load" src/ --include="*.py" | grep -v "test" || echo "No unsafe deserialization found"
+
+      - name: Check for debug mode in production
+        run: |
+          echo "Checking for debug mode..."
+          grep -rn "DEBUG\s*=\s*True\|debug\s*=\s*True" src/ --include="*.py" | grep -v "test" || echo "No debug mode found"
+
+      - name: Check for sensitive data in logs
+        run: |
+          echo "Checking for sensitive data in logs..."
+          grep -rn "log.*password\|log.*secret\|log.*token\|log.*api_key\|print.*password\|print.*secret\|print.*token\|print.*api_key" src/ --include="*.py" | grep -v "test" || echo "No sensitive data in logs found"
+
+      - name: Check for weak cryptography
+        run: |
+          echo "Checking for weak cryptography..."
+          grep -rn "md5\|sha1\|DES\|RC4" src/ --include="*.py" | grep -v "test" || echo "No weak cryptography found"
+
+      - name: Check for open redirects
+        run: |
+          echo "Checking for open redirect risks..."
+          grep -rn "redirect.*request\.\|redirect.*params" src/ --include="*.py" | grep -v "test" || echo "No open redirect risks found"
+
+  report:
+    name: Security Report
+    needs: [bandit, secret-detection, dependency-audit, sast, pentest-checks]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/
+
+      - name: Generate summary
+        run: |
+          echo "# Security Scan Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Bandit | ${{ needs.bandit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret Detection | ${{ needs.secret-detection.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependency Audit | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST | ${{ needs.sast.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Pentest Checks | ${{ needs.pentest-checks.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download detailed reports from the artifacts section." >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if critical issues
+        run: |
+          if [ "${{ needs.bandit.result }}" = "failure" ] || \
+             [ "${{ needs.secret-detection.result }}" = "failure" ]; then
+            echo "::error::Critical security issues detected!"
+            exit 1
+          fi

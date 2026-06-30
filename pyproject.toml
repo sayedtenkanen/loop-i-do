@@ -37,6 +37,11 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0",
 ]
+security = [
+    "bandit>=1.7.0",
+    "pip-audit>=2.6.0",
+    "detect-secrets>=1.4.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/sayedtenkanen/loop-i-do"
