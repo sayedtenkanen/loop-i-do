@@ -29,10 +29,7 @@ async def main():
     print("✓ Configuration initialized")
 
     # 2. Initialize memory layer
-    memory = MemoryLayer(
-        backend="sqlite",
-        connection_string="example_loop_state.db"
-    )
+    memory = MemoryLayer(backend="sqlite", connection_string="example_loop_state.db")
     print("✓ Memory layer initialized with SQLite backend")
 
     # 3. Initialize scheduler
@@ -66,7 +63,7 @@ async def main():
         discovery_task="Find and analyze sample issues",
         verification_criteria={"tests_pass": True, "lint_clean": True},
         max_retries=3,
-        timeout_seconds=300
+        timeout_seconds=300,
     )
     print(f"✓ Loop defined: {loop_def.id}")
 
@@ -74,15 +71,14 @@ async def main():
     automation_id = scheduler.add_cron_trigger(
         loop_id=loop_def.id,
         cron_expr="0 9 * * *",  # Daily at 9 AM
-        cooldown=3600
+        cooldown=3600,
     )
     print(f"✓ Automation scheduled: {automation_id}")
 
     # 11. Create a sample skill
     from docs.skills import SKILL_TEMPLATES
-    sample_skill = skills_engine.create_skill_from_template(
-        SKILL_TEMPLATES["code_review"]
-    )
+
+    sample_skill = skills_engine.create_skill_from_template(SKILL_TEMPLATES["code_review"])
     print(f"✓ Sample skill created: {sample_skill.name}")
 
     # 12. List available agent types
@@ -90,11 +86,14 @@ async def main():
     print(f"✓ Available agent types: {[a['type'] for a in agent_types]}")
 
     # 13. Save initial state
-    await memory.save_state(loop_def.id, {
-        "status": "initialized",
-        "created_at": "2024-01-01T00:00:00",
-        "metadata": {"example": True}
-    })
+    await memory.save_state(
+        loop_def.id,
+        {
+            "status": "initialized",
+            "created_at": "2024-01-01T00:00:00",
+            "metadata": {"example": True},
+        },
+    )
     print("✓ Initial state saved")
 
     # 14. Load state back
@@ -109,6 +108,7 @@ async def main():
     print("3. Configure external tool plugins")
     print("4. Set up monitoring and logging")
     print("5. Deploy to production environment")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

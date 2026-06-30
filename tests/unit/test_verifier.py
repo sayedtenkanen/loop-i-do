@@ -13,9 +13,7 @@ class TestVerificationResult:
         assert result.issues == []
 
     def test_failed_result(self):
-        result = VerificationResult(
-            passed=False, score=0.3, issues=["Tests failed", "Lint errors"]
-        )
+        result = VerificationResult(passed=False, score=0.3, issues=["Tests failed", "Lint errors"])
         assert result.passed is False
         assert result.score == 0.3
         assert len(result.issues) == 2

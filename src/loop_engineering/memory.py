@@ -66,9 +66,7 @@ class MemoryLayer:
     def load(self, loop_id: str) -> LoopState | None:
         """Load loop state by ID."""
         conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute(
-            "SELECT * FROM loop_states WHERE loop_id = ?", (loop_id,)
-        )
+        cursor = conn.execute("SELECT * FROM loop_states WHERE loop_id = ?", (loop_id,))
         row = cursor.fetchone()
         conn.close()
 
