@@ -7,6 +7,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .debug import log
+
 
 class Memory:
     def __init__(self, path: str | Path = "loop_state.json"):
@@ -14,11 +16,12 @@ class Memory:
         self._lock = threading.Lock()
         if not self.path.exists():
             self._write({"findings": [], "log": []})
+        log("Memory init", path=str(self.path))
 
     def _read(self) -> dict[str, list[dict[str, str]]]:
         return json.loads(self.path.read_text())
 
-    def _write(self, data: dict) -> None:
+    def _write(self, data: dict[str, list[dict[str, str]]]) -> None:
         self.path.write_text(json.dumps(data, indent=2, default=str))
 
     def add_finding(self, finding: dict) -> str:
@@ -32,6 +35,7 @@ class Memory:
             }
             data["findings"].append(finding)
             self._write(data)
+            log("Memory.add_finding", id=finding["id"], title=finding.get("title", "")[:50])
             return finding["id"]
 
     def update_finding(self, finding_id: str, **updates) -> None:
@@ -42,9 +46,12 @@ class Memory:
                     f.update(updates)
                     f["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._write(data)
+            log("Memory.update_finding", id=finding_id, updates=list(updates.keys()))
 
     def open_findings(self) -> list[dict]:
-        return [f for f in self._read()["findings"] if f["status"] == "open"]
+        findings = [f for f in self._read()["findings"] if f["status"] == "open"]
+        log("Memory.open_findings", count=len(findings))
+        return findings
 
     def all_findings(self) -> list[dict]:
         return self._read()["findings"]
@@ -54,3 +61,4 @@ class Memory:
             data = self._read()
             data["log"].append({"ts": datetime.now(timezone.utc).isoformat(), "message": message})
             self._write(data)
+            log("Memory.log", message=message[:50])

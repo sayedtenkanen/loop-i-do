@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .connectors import ConnectorRegistry
+from .debug import log, log_api_call, log_api_response, log_tool_call, timer
+
+if TYPE_CHECKING:
+    from .skills import SkillRegistry
 
 try:
     from openai import APIStatusError, APITimeoutError, OpenAI
@@ -25,6 +30,7 @@ class Agent:
         system_prompt: str,
         model: str = DEFAULT_MODEL,
         connectors: ConnectorRegistry | None = None,
+        skills: SkillRegistry | None = None,
         max_tokens: int = 2048,
         dry_run: bool | None = None,
         timeout: float = 30.0,
@@ -33,6 +39,7 @@ class Agent:
         self.system_prompt = system_prompt
         self.model = model
         self.connectors = connectors or ConnectorRegistry()
+        self.skills = skills
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.max_retries = max_retries
@@ -47,13 +54,27 @@ class Agent:
                 timeout=self.timeout,
                 max_retries=0,
             )
+        log("Agent init", model=model, dry_run=self.dry_run, skills=bool(skills))
+
+    def _build_system_prompt(self, user_prompt: str) -> str:
+        parts = [self.system_prompt]
+
+        if self.skills:
+            skill = self.skills.match(user_prompt)
+            if skill:
+                log("Auto-loaded skill", name=skill.name)
+                parts.append(f"\n\n## Relevant Skill: {skill.name}\n\n{skill.instructions}")
+
+        return "".join(parts)
 
     def run(self, user_prompt: str, max_turns: int = 6) -> str:
         if self.dry_run:
-            return f"[dry-run:{self.model}] would respond to: {user_prompt[:120]}..."
+            result = f"[dry-run:{self.model}] would respond to: {user_prompt[:120]}..."
+            log("Agent dry-run", result=result[:100])
+            return result
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": self._build_system_prompt(user_prompt)},
             {"role": "user", "content": user_prompt},
         ]
 
@@ -78,12 +99,13 @@ class Agent:
             try:
                 return self._run_loop(messages, openai_tools, max_turns)
             except APITimeoutError:
+                log("Agent timeout", attempt=attempt + 1)
                 if attempt < self.max_retries - 1:
                     time.sleep(2**attempt)
                     continue
-                raise
             except APIStatusError as e:
                 if e.status_code >= 500 and attempt < self.max_retries - 1:
+                    log("Agent server error", status=e.status_code, attempt=attempt + 1)
                     time.sleep(2**attempt)
                     continue
                 raise
@@ -96,7 +118,9 @@ class Agent:
         openai_tools: list[dict] | None,
         max_turns: int,
     ) -> str:
-        for _ in range(max_turns):
+        for turn in range(max_turns):
+            log(f"Turn {turn + 1}/{max_turns}", messages=len(messages))
+
             kwargs: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": self.max_tokens,
@@ -105,14 +129,22 @@ class Agent:
             if openai_tools:
                 kwargs["tools"] = openai_tools
 
-            response = self._client.chat.completions.create(**kwargs)  # type: ignore[union-attr]
+            log_api_call(self.model, messages, openai_tools)
+
+            with timer("API call"):
+                response = self._client.chat.completions.create(**kwargs)  # type: ignore[union-attr]
+
+            log_api_response(response)
 
             if not response.choices:
+                log("No choices in response")
                 return "Error: No response from model"
 
             choice = response.choices[0]
 
             if choice.message.tool_calls:
+                log("Tool calls detected", count=len(choice.message.tool_calls))
+
                 messages.append(
                     {
                         "role": "assistant",
@@ -131,11 +163,10 @@ class Agent:
                     }
                 )
 
-                import json
-
                 for tc in choice.message.tool_calls:
                     args = json.loads(tc.function.arguments)
                     result = self.connectors.call(tc.function.name, **args)
+                    log_tool_call(tc.function.name, args, result)
                     messages.append(
                         {
                             "role": "tool",
@@ -144,6 +175,8 @@ class Agent:
                         }
                     )
             else:
-                return choice.message.content or ""
+                content = choice.message.content or ""
+                log("Final response", length=len(content))
+                return content
 
         return "stopped: max turns reached without a final answer"

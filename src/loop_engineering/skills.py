@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .debug import log
+
 
 @dataclass
 class Skill:
@@ -23,6 +25,7 @@ class SkillRegistry:
     def reload(self) -> None:
         self._skills.clear()
         if not self.skills_dir.exists():
+            log("Skills dir not found", path=str(self.skills_dir))
             return
         for folder in sorted(self.skills_dir.iterdir()):
             skill_md = folder / "SKILL.md"
@@ -34,6 +37,7 @@ class SkillRegistry:
                     instructions=instructions,
                     path=folder,
                 )
+        log("Skills loaded", count=len(self._skills), names=list(self._skills.keys()))
 
     @staticmethod
     def _parse(text: str) -> tuple[str, str]:
@@ -49,7 +53,9 @@ class SkillRegistry:
         return paragraphs[0], (paragraphs[1] if len(paragraphs) > 1 else "")
 
     def get(self, name: str) -> Skill | None:
-        return self._skills.get(name)
+        skill = self._skills.get(name)
+        log("Skills.get", name=name, found=skill is not None)
+        return skill
 
     def match(self, task_description: str) -> Skill | None:
         task_words = set(task_description.lower().split())
@@ -58,6 +64,7 @@ class SkillRegistry:
             score = len(task_words & set(skill.description.lower().split()))
             if score > best_score:
                 best, best_score = skill, score
+        log("Skills.match", query=task_description[:50], matched=best.name if best else None)
         return best
 
     def __iter__(self):
