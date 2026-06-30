@@ -184,7 +184,7 @@ class LoopOrchestrator:
             )
 
 class StateMachine:
-    """Manages loop state transitions"""
+    """Manages loop state transitions with validation"""
     
     def __init__(self):
         self.transitions = {
@@ -194,12 +194,72 @@ class StateMachine:
             LoopState.COMPLETED: [LoopState.IDLE],
             LoopState.FAILED: [LoopState.IDLE, LoopState.RUNNING]
         }
+        self.state_history: Dict[str, List[Dict]] = {}  # loop_id -> history
     
-    async def transition(self, loop_id: str, new_state: LoopState):
-        """Transition loop to new state"""
-        # Validate transition is allowed
+    async def transition(self, loop_id: str, new_state: LoopState, 
+                        memory_layer=None) -> bool:
+        """Transition loop to new state with validation
+        
+        Returns True if transition succeeded, False otherwise
+        """
+        # Get current state
+        current_state = await self._get_current_state(loop_id, memory_layer)
+        
+        # Validate transition
+        if not self._is_valid_transition(current_state, new_state):
+            # Log invalid transition attempt
+            self._log_transition(loop_id, current_state, new_state, valid=False)
+            return False
+        
+        # Record transition in history
+        self._log_transition(loop_id, current_state, new_state, valid=True)
+        
         # Update state in memory
-        pass
+        if memory_layer:
+            await memory_layer.save_state(loop_id, {
+                "status": new_state.value,
+                "previous_state": current_state.value if current_state else None,
+                "transition_at": datetime.now().isoformat()
+            })
+        
+        return True
+    
+    def _is_valid_transition(self, current: LoopState, new: LoopState) -> bool:
+        """Check if transition is valid"""
+        if current is None:
+            # Allow initial transition to RUNNING
+            return new == LoopState.RUNNING
+        
+        allowed = self.transitions.get(current, [])
+        return new in allowed
+    
+    async def _get_current_state(self, loop_id: str, memory_layer=None) -> LoopState:
+        """Get current state from memory"""
+        if memory_layer:
+            state = await memory_layer.load_state(loop_id)
+            status = state.get("status", "idle")
+            try:
+                return LoopState(status)
+            except ValueError:
+                return LoopState.IDLE
+        return LoopState.IDLE
+    
+    def _log_transition(self, loop_id: str, from_state: LoopState, 
+                       to_state: LoopState, valid: bool):
+        """Log state transition"""
+        if loop_id not in self.state_history:
+            self.state_history[loop_id] = []
+        
+        self.state_history[loop_id].append({
+            "from": from_state.value if from_state else None,
+            "to": to_state.value,
+            "valid": valid,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def get_history(self, loop_id: str) -> List[Dict]:
+        """Get state transition history for a loop"""
+        return self.state_history.get(loop_id, [])
 ```
 
 ## Implementation Notes

@@ -2,6 +2,8 @@
 
 ## Purpose
 Persistent state storage between loop runs, maintaining context across sessions.
+Key insight from article: "The model forgets everything between runs so the memory 
+has to be on disk and not in the context."
 
 ## Key Interfaces
 
@@ -42,6 +44,50 @@ class LoopState:
     metadata: Dict[str, Any] = None
     error: str = None
 
+# Context vs Audit state separation
+# ContextState: Small, fits in agent context window
+# AuditState: Large, stays on disk for history/debugging
+@dataclass
+class ContextState:
+    """State that fits in agent context window (small)"""
+    loop_id: str
+    status: str
+    current_task_id: Optional[str]
+    pending_task_count: int
+    completed_task_count: int
+    failed_task_count: int
+    last_error: Optional[str]
+    summary: str  # Brief summary of what's happening
+    
+    def to_dict(self) -> Dict:
+        return {
+            "loop_id": self.loop_id,
+            "status": self.status,
+            "current_task_id": self.current_task_id,
+            "pending": self.pending_task_count,
+            "completed": self.completed_task_count,
+            "failed": self.failed_task_count,
+            "last_error": self.last_error,
+            "summary": self.summary
+        }
+    
+    def estimate_tokens(self) -> int:
+        """Estimate token count for this state"""
+        return len(json.dumps(self.to_dict())) // 4
+
+@dataclass
+class AuditState:
+    """Full state for debugging and history (large)"""
+    loop_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    tasks: List[TaskState]
+    metadata: Dict[str, Any] = None
+    error: str = None
+    token_usage: Dict[str, Any] = None
+    execution_log: List[Dict] = None
+
 class MemoryLayer:
     def __init__(self, storage_backend: str = "sqlite", 
                  connection_string: str = None):
@@ -67,6 +113,73 @@ class MemoryLayer:
     async def load_state(self, loop_id: str) -> Dict[str, Any]:
         """Load loop state from storage"""
         return await self.storage.load_loop_state(loop_id)
+    
+    async def load_state_for_context(self, loop_id: str, 
+                                    max_tokens: int = 2000) -> ContextState:
+        """Load state truncated to fit in agent context window
+        
+        This is the key method for "memory as disk, not context":
+        - Loads full state from disk
+        - Extracts only what agents need
+        - Truncates to fit token budget
+        """
+        full_state = await self.load_state(loop_id)
+        
+        if not full_state:
+            return ContextState(
+                loop_id=loop_id,
+                status="unknown",
+                current_task_id=None,
+                pending_task_count=0,
+                completed_task_count=0,
+                failed_task_count=0,
+                last_error=None,
+                summary="No state found"
+            )
+        
+        # Extract context-relevant info
+        tasks = full_state.get("tasks", {})
+        pending = sum(1 for t in tasks.values() if t.get("status") == "pending")
+        completed = sum(1 for t in tasks.values() if t.get("status") == "completed")
+        failed = sum(1 for t in tasks.values() if t.get("status") == "failed")
+        
+        # Find current task
+        current_task = None
+        for task_id, task in tasks.items():
+            if task.get("status") == "in_progress":
+                current_task = task_id
+                break
+        
+        # Create context state
+        context = ContextState(
+            loop_id=loop_id,
+            status=full_state.get("status", "unknown"),
+            current_task_id=current_task,
+            pending_task_count=pending,
+            completed_task_count=completed,
+            failed_task_count=failed,
+            last_error=full_state.get("error"),
+            summary=self._generate_summary(full_state)
+        )
+        
+        # Truncate if exceeds token budget
+        while context.estimate_tokens() > max_tokens and context.summary:
+            context.summary = context.summary[:-100] + "..."
+        
+        return context
+    
+    def _generate_summary(self, state: Dict) -> str:
+        """Generate brief summary of loop state"""
+        status = state.get("status", "unknown")
+        tasks = state.get("tasks", {})
+        
+        if not tasks:
+            return f"Loop {state.get('loop_id', 'unknown')} is {status} with no tasks"
+        
+        total = len(tasks)
+        completed = sum(1 for t in tasks.values() if t.get("status") == "completed")
+        
+        return f"Loop {state.get('loop_id', 'unknown')}: {status}, {completed}/{total} tasks completed"
     
     async def update_progress(self, loop_id: str, task_id: str, 
                             status: str, result: Dict = None):

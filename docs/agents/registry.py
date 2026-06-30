@@ -22,6 +22,21 @@ class AgentConfig:
     retry_attempts: int = 3
     tools: List[str] = None
     metadata: Dict[str, Any] = None
+    role: str = "implementer"  # explorer, implementer, verifier, triage
+
+# Model separation enforcement
+MAKER_CHECKER_MODEL_SEPARATION = {
+    "implementer": {
+        "gpt-4o": "gpt-4o",           # Maker uses standard model
+        "gpt-4o-mini": "gpt-4o-mini",  # For simple tasks
+        "gpt-4": "gpt-4",
+    },
+    "verifier": {
+        "gpt-4o": "gpt-4o",           # Checker can use same or stronger
+        "gpt-4o-mini": "gpt-4o",      # Verifier should be at least as strong
+        "gpt-4": "gpt-4",
+    }
+}
 
 @dataclass
 class AgentTask:
@@ -97,13 +112,14 @@ class ExplorerAgent(BaseAgent):
         return ["analysis", "read-only", "discovery"]
 
 class ImplementerAgent(BaseAgent):
-    """Code writing agent for implementation"""
+    """Code writing agent for implementation (Maker)"""
     
     def __init__(self, agent_id: str, config: AgentConfig = None):
         super().__init__(agent_id, config or AgentConfig(
-            model="gpt-4",
+            model="gpt-4o",  # Standard maker model
             temperature=0.3,
-            max_tokens=4000
+            max_tokens=4000,
+            role="implementer"
         ))
     
     async def execute(self, task: AgentTask) -> Dict[str, Any]:
@@ -129,13 +145,19 @@ class ImplementerAgent(BaseAgent):
         return ["coding", "implementation", "testing"]
 
 class VerifierAgent(BaseAgent):
-    """Review/validation agent with higher scrutiny"""
+    """Review/validation agent with higher scrutiny (Checker)
+    
+    IMPORTANT: The verifier should NOT see the implementer's reasoning.
+    Only the final output (code changes, test results) should be passed.
+    This prevents the "too nice grading own homework" problem.
+    """
     
     def __init__(self, agent_id: str, config: AgentConfig = None):
         super().__init__(agent_id, config or AgentConfig(
-            model="gpt-4",
+            model="gpt-4o",  # Checker can use same or stronger model
             temperature=0.0,  # Lower temperature for more consistent verification
-            max_tokens=2000
+            max_tokens=2000,
+            role="verifier"
         ))
     
     async def execute(self, task: AgentTask) -> Dict[str, Any]:
@@ -312,31 +334,43 @@ class SecurityReviewerAgent(BaseAgent):
 
 ```python
 class AgentTeam:
-    """Orchestrate multiple agents working together"""
+    """Orchestrate multiple agents working together
+    
+    Enforces maker/checker separation:
+    - Implementer (maker) writes code
+    - Verifier (checker) reviews ONLY the output, not the reasoning
+    - Different models can be used for extra scrutiny
+    """
     
     def __init__(self, registry: AgentRegistry):
         self.registry = registry
     
     async def implement_and_verify(self, task: AgentTask) -> Dict:
-        """Implementer + Verifier team pattern"""
-        # Spawn implementer
+        """Implementer + Verifier team pattern with model separation"""
+        # Spawn implementer (maker)
         implementer = await self.registry.spawn_agent("implementer", task.context)
         
         # Execute implementation
         implementation_result = await implementer.execute(task)
         
+        # CONTEXT ISOLATION: Verifier sees ONLY the output, not the reasoning
+        # This prevents "too nice grading own homework"
+        verification_context = {
+            "code_changes": implementation_result.get("files_changed", []),
+            "test_results": implementation_result.get("test_results", {}),
+            "original_task": task.context.get("description", ""),
+            # NOTE: Do NOT include implementation_result["reasoning"] here
+        }
+        
         # Create verification task
         verification_task = AgentTask(
             task_id=f"verify-{task.task_id}",
             description=f"Verify implementation: {task.description}",
-            context={
-                "implementation": implementation_result,
-                "original_task": task.context
-            },
+            context=verification_context,
             created_at=datetime.now()
         )
         
-        # Spawn verifier
+        # Spawn verifier (checker) - potentially different model
         verifier = await self.registry.spawn_agent("verifier", verification_task.context)
         
         # Execute verification
@@ -345,7 +379,9 @@ class AgentTeam:
         return {
             "implementation": implementation_result,
             "verification": verification_result,
-            "passed": verification_result.get("passed", False)
+            "passed": verification_result.get("passed", False),
+            "maker_model": implementer.config.model,
+            "checker_model": verifier.config.model
         }
     
     async def explore_implement_verify(self, task: AgentTask) -> Dict:

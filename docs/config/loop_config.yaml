@@ -21,35 +21,46 @@ scheduler:
   enable_event_triggers: true
 
 agents:
+  # Maker/Checker model separation
+  # The article emphasizes: "The model that wrote the code is way too nice 
+  # grading its own homework." Use different models or at least different
+  # temperature settings for implementer vs verifier.
+  
   explorer:
-    model: "gpt-4-mini"
+    model: "gpt-4o-mini"
     temperature: 0.1
     max_tokens: 1000
     timeout: 120
     retry_attempts: 2
+    role: "explorer"
     tools:
       - "read_file"
       - "search_code"
       - "analyze_dependencies"
   
-  implementer:
-    model: "gpt-4"
+  implementer:  # MAKER
+    model: "gpt-4o"  # Standard maker model
     temperature: 0.3
     max_tokens: 4000
     timeout: 300
     retry_attempts: 3
+    role: "implementer"
     tools:
       - "write_file"
       - "edit_file"
       - "run_tests"
       - "create_commit"
   
-  verifier:
-    model: "gpt-4"
-    temperature: 0.0
+  verifier:  # CHECKER
+    model: "gpt-4o"  # Can be same or stronger than maker
+    temperature: 0.0  # Lower temperature for consistent verification
     max_tokens: 2000
     timeout: 180
     retry_attempts: 2
+    role: "verifier"
+    # IMPORTANT: Verifier should NOT see implementer's reasoning
+    # Only pass: code_changes, test_results, original_task description
+    context_isolation: true
     tools:
       - "run_tests"
       - "lint_code"
@@ -57,15 +68,39 @@ agents:
       - "verify_dependencies"
   
   triage:
-    model: "gpt-4-mini"
+    model: "gpt-4o-mini"
     temperature: 0.2
     max_tokens: 1000
     timeout: 60
     retry_attempts: 1
+    role: "triage"
     tools:
       - "read_issues"
       - "analyze_logs"
       - "classify_priority"
+
+# Model selection based on task complexity
+model_selection:
+  simple:
+    explorer: "gpt-4o-mini"
+    implementer: "gpt-4o-mini"
+    verifier: "gpt-4o"
+    triage: "gpt-4o-mini"
+  medium:
+    explorer: "gpt-4o-mini"
+    implementer: "gpt-4o"
+    verifier: "gpt-4o"
+    triage: "gpt-4o-mini"
+  complex:
+    explorer: "gpt-4o"
+    implementer: "gpt-4o"
+    verifier: "gpt-4o"
+    triage: "gpt-4o"
+  critical:
+    explorer: "gpt-4o"
+    implementer: "gpt-4o"
+    verifier: "gpt-4o"  # Or claude-3-opus for extra scrutiny
+    triage: "gpt-4o"
 
 worktrees:
   base_path: "./worktrees"

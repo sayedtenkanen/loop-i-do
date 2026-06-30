@@ -24,11 +24,27 @@ class Skill:
     metadata: Dict[str, Any] = None
     created_at: datetime = None
     updated_at: datetime = None
+    # Institutional knowledge fields (from article: "we don't do this because...")
+    anti_patterns: List[str] = None
+    conventions: List[str] = None
+    postmortems: List[str] = None
+    
+    def estimate_tokens(self) -> int:
+        """Estimate token count for this skill"""
+        total_text = self.instructions
+        if self.anti_patterns:
+            total_text += "\n".join(self.anti_patterns)
+        if self.conventions:
+            total_text += "\n".join(self.conventions)
+        if self.postmortems:
+            total_text += "\n".join(self.postmortems)
+        return len(total_text) // 4
 
 class SkillsEngine:
     def __init__(self, skills_dir: str = "./skills"):
         self.skills_dir = Path(skills_dir)
         self.skill_registry: Dict[str, Skill] = {}
+        self._cache: Dict[str, Skill] = {}  # Cache for parsed skills
         self._load_all_skills()
     
     def _load_all_skills(self):
@@ -41,6 +57,7 @@ class SkillsEngine:
                 skill = self._parse_skill_file(skill_file)
                 if skill:
                     self.skill_registry[skill.name] = skill
+                    self._cache[skill.name] = skill  # Cache it
             except Exception as e:
                 print(f"Error loading skill {skill_file}: {e}")
     
@@ -58,16 +75,22 @@ class SkillsEngine:
                 # Parse YAML
                 metadata = yaml.safe_load(yaml_content)
                 
+                # Parse markdown sections for institutional knowledge
+                sections = self._parse_markdown_sections(markdown_content)
+                
                 return Skill(
                     name=metadata.get("name", skill_path.parent.name),
                     description=metadata.get("description", ""),
                     version=metadata.get("version", "1.0"),
-                    instructions=markdown_content,
+                    instructions=sections.get("main", markdown_content),
                     triggers=metadata.get("triggers", []),
                     scripts=metadata.get("scripts", []),
                     metadata=metadata,
                     created_at=metadata.get("created_at"),
-                    updated_at=metadata.get("updated_at")
+                    updated_at=metadata.get("updated_at"),
+                    anti_patterns=sections.get("anti_patterns", []),
+                    conventions=sections.get("conventions", []),
+                    postmortems=sections.get("postmortems", [])
                 )
         
         # If no YAML frontmatter, use filename as name
@@ -79,6 +102,28 @@ class SkillsEngine:
             triggers=[]
         )
     
+    def _parse_markdown_sections(self, content: str) -> Dict[str, Any]:
+        """Parse markdown sections for institutional knowledge"""
+        sections = {"main": content, "anti_patterns": [], "conventions": [], "postmortems": []}
+        
+        # Simple parsing for anti-patterns, conventions, postmortems
+        lines = content.split('\n')
+        current_section = "main"
+        
+        for line in lines:
+            if "anti-pattern" in line.lower() or "don't do" in line.lower():
+                current_section = "anti_patterns"
+            elif "convention" in line.lower() or "we do" in line.lower():
+                current_section = "conventions"
+            elif "postmortem" in line.lower() or "incident" in line.lower():
+                current_section = "postmortems"
+            elif line.startswith('## ') or line.startswith('### '):
+                current_section = "main"
+            elif current_section != "main" and line.strip().startswith('- '):
+                sections[current_section].append(line.strip()[2:])
+        
+        return sections
+    
     def load_skill(self, skill_name: str) -> Optional[Skill]:
         """Load a skill by name"""
         return self.skill_registry.get(skill_name)
@@ -88,7 +133,11 @@ class SkillsEngine:
         self.skill_registry[skill.name] = skill
     
     def get_relevant_skills(self, task_description: str) -> List[Skill]:
-        """Find skills relevant to a given task"""
+        """Find skills relevant to a given task
+        
+        IMPORTANT: Returns empty list if no triggers match (not all skills).
+        This prevents wasting tokens by loading irrelevant skills.
+        """
         relevant = []
         
         for skill in self.skill_registry.values():
@@ -98,10 +147,10 @@ class SkillsEngine:
                     relevant.append(skill)
                     break
         
-        # If no specific matches, return all skills (agent can decide relevance)
-        if not relevant:
-            return list(self.skill_registry.values())
-        
+        # Return only matched skills (NOT all skills)
+        # Article: "Without skills the loop re-derives your whole project 
+        # from zero every cycle, with skills it kind of compounds."
+        # But we only want RELEVANT skills to save tokens
         return relevant
     
     def create_skill_from_template(self, template: Dict[str, Any]) -> Skill:

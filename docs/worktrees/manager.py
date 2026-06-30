@@ -14,6 +14,8 @@ import tempfile
 import shutil
 from datetime import datetime
 import asyncio
+import fcntl
+import os
 
 @dataclass
 class Worktree:
@@ -23,75 +25,142 @@ class Worktree:
     created_at: datetime
     base_repo_path: str
     is_active: bool = True
+    lock_fd: int = None  # File descriptor for lock
 
 class WorktreeManager:
-    def __init__(self, base_repo_path: str = "."):
+    def __init__(self, base_repo_path: str = ".", max_concurrent: int = 10,
+                 subprocess_timeout: int = 60):
         self.base_path = Path(base_repo_path).resolve()
         self.worktrees: Dict[str, Worktree] = {}
         self.worktree_dir = self.base_path.parent / "worktrees"
         self.worktree_dir.mkdir(exist_ok=True)
+        self.max_concurrent = max_concurrent
+        self.subprocess_timeout = subprocess_timeout
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._locks_dir = self.worktree_dir / ".locks"
+        self._locks_dir.mkdir(exist_ok=True)
+    
+    def _get_lock_path(self, task_id: str) -> Path:
+        """Get lock file path for a task"""
+        return self._locks_dir / f"{task_id}.lock"
+    
+    def _acquire_lock(self, task_id: str) -> int:
+        """Acquire file lock for a task (non-blocking)"""
+        lock_path = self._get_lock_path(task_id)
+        lock_fd = open(lock_path, 'w')
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_fd.write(f"{os.getpid()}\n")
+            lock_fd.flush()
+            return lock_fd.fileno()
+        except IOError:
+            lock_fd.close()
+            return None
+    
+    def _release_lock(self, task_id: str, lock_fd: int):
+        """Release file lock"""
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except:
+                pass
+            lock_path = self._get_lock_path(task_id)
+            if lock_path.exists():
+                lock_path.unlink()
     
     async def create_worktree(self, task_id: str) -> Worktree:
-        """Create an isolated worktree for a task"""
-        # Generate unique branch name
-        branch_name = f"worktree-{task_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        worktree_path = self.worktree_dir / f"worktree-{task_id}"
+        """Create an isolated worktree for a task with concurrency control"""
+        # Acquire lock to prevent duplicate worktrees for same task
+        lock_fd = self._acquire_lock(task_id)
+        if lock_fd is None:
+            raise RuntimeError(f"Could not acquire lock for task {task_id}")
         
-        # Check if worktree already exists
-        if worktree_path.exists():
-            await self.delete_worktree(task_id)
-        
-        # Create git worktree
         try:
-            subprocess.run(
-                ["git", "worktree", "add", "-b", branch_name, str(worktree_path)],
-                cwd=str(self.base_path),
-                check=True,
-                capture_output=True,
-                text=True
-            )
-        except subprocess.CalledProcessError as e:
-            # Fallback to copy if git worktree fails
-            await self._create_copy_worktree(task_id, worktree_path)
-            branch_name = f"copy-{task_id}"
-        
-        # Create worktree object
-        worktree = Worktree(
-            task_id=task_id,
-            path=str(worktree_path),
-            branch=branch_name,
-            created_at=datetime.now(),
-            base_repo_path=str(self.base_path),
-            is_active=True
-        )
-        
-        self.worktrees[task_id] = worktree
-        return worktree
+            # Use semaphore to limit concurrent worktrees
+            async with self._semaphore:
+                # Generate unique branch name
+                branch_name = f"worktree-{task_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                worktree_path = self.worktree_dir / f"worktree-{task_id}"
+                
+                # Check if worktree already exists
+                if worktree_path.exists():
+                    await self._delete_worktree_files(worktree_path)
+                
+                # Create git worktree with timeout
+                try:
+                    subprocess.run(
+                        ["git", "worktree", "add", "-b", branch_name, str(worktree_path)],
+                        cwd=str(self.base_path),
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.subprocess_timeout
+                    )
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError(f"Git worktree creation timed out for task {task_id}")
+                except subprocess.CalledProcessError:
+                    # Fallback to copy if git worktree fails
+                    await self._create_copy_worktree(task_id, worktree_path)
+                    branch_name = f"copy-{task_id}"
+                
+                # Create worktree object
+                worktree = Worktree(
+                    task_id=task_id,
+                    path=str(worktree_path),
+                    branch=branch_name,
+                    created_at=datetime.now(),
+                    base_repo_path=str(self.base_path),
+                    is_active=True,
+                    lock_fd=lock_fd
+                )
+                
+                self.worktrees[task_id] = worktree
+                return worktree
+        except Exception:
+            self._release_lock(task_id, lock_fd)
+            raise
     
     async def _create_copy_worktree(self, task_id: str, worktree_path: Path):
         """Create worktree by copying repository"""
-        # Copy entire repository
-        shutil.copytree(
-            str(self.base_path),
-            str(worktree_path),
-            ignore=shutil.ignore_patterns('.git', '__pycache__', 'node_modules')
-        )
-        
-        # Initialize git in copy
-        subprocess.run(
-            ["git", "init"],
-            cwd=str(worktree_path),
-            check=True,
-            capture_output=True
-        )
-        
-        # Add remote to original repo
-        subprocess.run(
-            ["git", "remote", "add", "origin", str(self.base_path)],
-            cwd=str(worktree_path),
-            check=True,
-            capture_output=True
-        )
+        # Use git clone --local for faster copy that preserves history
+        try:
+            subprocess.run(
+                ["git", "clone", "--local", "--no-checkout", 
+                 str(self.base_path), str(worktree_path)],
+                check=True,
+                capture_output=True,
+                timeout=self.subprocess_timeout
+            )
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            # Fallback to shutil.copytree
+            shutil.copytree(
+                str(self.base_path),
+                str(worktree_path),
+                ignore=shutil.ignore_patterns('.git', '__pycache__', 'node_modules')
+            )
+            
+            # Initialize git in copy
+            subprocess.run(
+                ["git", "init"],
+                cwd=str(worktree_path),
+                check=True,
+                capture_output=True,
+                timeout=self.subprocess_timeout
+            )
+            
+            # Add remote to original repo
+            subprocess.run(
+                ["git", "remote", "add", "origin", str(self.base_path)],
+                cwd=str(worktree_path),
+                check=True,
+                capture_output=True,
+                timeout=self.subprocess_timeout
+            )
+    
+    async def _delete_worktree_files(self, worktree_path: Path):
+        """Delete worktree files"""
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path)
     
     async def delete_worktree(self, task_id: str):
         """Clean up worktree after task completion"""
@@ -101,29 +170,33 @@ class WorktreeManager:
         
         worktree_path = Path(worktree.path)
         
-        # Try git worktree removal first
+        # Try git worktree removal first with timeout
         try:
             subprocess.run(
                 ["git", "worktree", "remove", str(worktree_path), "--force"],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
-        except subprocess.CalledProcessError:
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             # Fallback to directory removal
-            if worktree_path.exists():
-                shutil.rmtree(worktree_path)
+            await self._delete_worktree_files(worktree_path)
         
-        # Remove branch if it exists
+        # Remove branch if it exists with timeout
         try:
             subprocess.run(
                 ["git", "branch", "-D", worktree.branch],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
-        except subprocess.CalledProcessError:
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             pass  # Branch might not exist
+        
+        # Release lock
+        self._release_lock(task_id, worktree.lock_fd)
         
         # Update worktree status
         worktree.is_active = False
@@ -150,13 +223,15 @@ class WorktreeManager:
                 ["git", "checkout", "main"],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
             subprocess.run(
                 ["git", "merge", worktree.branch],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
         
         elif strategy == "rebase":
@@ -165,13 +240,15 @@ class WorktreeManager:
                 ["git", "checkout", worktree.branch],
                 cwd=str(worktree_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
             subprocess.run(
                 ["git", "rebase", "main"],
                 cwd=str(worktree_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
             
             # Switch back to main and merge
@@ -179,13 +256,15 @@ class WorktreeManager:
                 ["git", "checkout", "main"],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
             subprocess.run(
                 ["git", "merge", worktree.branch],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
         
         elif strategy == "squash":
@@ -194,19 +273,22 @@ class WorktreeManager:
                 ["git", "checkout", "main"],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
             subprocess.run(
                 ["git", "merge", "--squash", worktree.branch],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
             subprocess.run(
                 ["git", "commit", "-m", f"Squashed changes from task {task_id}"],
                 cwd=str(self.base_path),
                 check=True,
-                capture_output=True
+                capture_output=True,
+                timeout=self.subprocess_timeout
             )
         
         # Clean up worktree after merge
@@ -226,10 +308,11 @@ class WorktreeManager:
                 cwd=str(worktree_path),
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=self.subprocess_timeout
             )
             return result.stdout.strip().split('\n') if result.stdout.strip() else []
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return []
     
     async def create_commit(self, task_id: str, message: str):
@@ -245,7 +328,8 @@ class WorktreeManager:
             ["git", "add", "."],
             cwd=str(worktree_path),
             check=True,
-            capture_output=True
+            capture_output=True,
+            timeout=self.subprocess_timeout
         )
         
         # Create commit
@@ -253,7 +337,8 @@ class WorktreeManager:
             ["git", "commit", "-m", message],
             cwd=str(worktree_path),
             check=True,
-            capture_output=True
+            capture_output=True,
+            timeout=self.subprocess_timeout
         )
     
     async def list_active_worktrees(self) -> List[Dict]:
