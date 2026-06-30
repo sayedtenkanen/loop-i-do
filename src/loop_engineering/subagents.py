@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .agent import Agent
+from .agent import DEFAULT_MODEL, Agent
 from .connectors import ConnectorRegistry
 
 
@@ -20,8 +20,8 @@ class MakerChecker:
         maker_system_prompt: str,
         checker_system_prompt: str,
         connectors: ConnectorRegistry | None = None,
-        maker_model: str = "claude-sonnet-5",
-        checker_model: str = "claude-opus-4-8",
+        maker_model: str = DEFAULT_MODEL,
+        checker_model: str = DEFAULT_MODEL,
     ):
         self.maker = Agent(maker_system_prompt, model=maker_model, connectors=connectors)
         self.checker = Agent(checker_system_prompt, model=checker_model, connectors=connectors)

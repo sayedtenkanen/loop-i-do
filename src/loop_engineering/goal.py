@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .agent import Agent
+from .agent import DEFAULT_MODEL, Agent
 from .connectors import ConnectorRegistry
 
 
@@ -11,8 +11,8 @@ class GoalLoop:
         self,
         worker_system_prompt: str,
         connectors: ConnectorRegistry | None = None,
-        worker_model: str = "claude-sonnet-5",
-        judge_model: str = "claude-haiku-4-5-20251001",
+        worker_model: str = DEFAULT_MODEL,
+        judge_model: str = DEFAULT_MODEL,
     ):
         self.worker = Agent(worker_system_prompt, model=worker_model, connectors=connectors)
         self.judge = Agent(
