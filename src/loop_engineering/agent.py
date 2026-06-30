@@ -8,16 +8,19 @@ from typing import Any
 from .connectors import ConnectorRegistry
 
 try:
-    import anthropic
+    from openai import OpenAI
 except ImportError:
-    anthropic = None  # type: ignore[assignment]
+    OpenAI = None  # type: ignore[assignment,misc]
+
+ZEN_BASE_URL = "https://opencode.ai/zen/v1"
+DEFAULT_MODEL = "nemotron-3-ultra-free"
 
 
 class Agent:
     def __init__(
         self,
         system_prompt: str,
-        model: str = "claude-sonnet-5",
+        model: str = DEFAULT_MODEL,
         connectors: ConnectorRegistry | None = None,
         max_tokens: int = 2048,
         dry_run: bool | None = None,
@@ -26,38 +29,83 @@ class Agent:
         self.model = model
         self.connectors = connectors or ConnectorRegistry()
         self.max_tokens = max_tokens
-        self.dry_run = dry_run if dry_run is not None else not os.environ.get("ANTHROPIC_API_KEY")
-        self._client = None if (self.dry_run or anthropic is None) else anthropic.Anthropic()  # type: ignore[assignment]
+        api_key = os.environ.get("OPENCODE_ZEN_API_KEY")
+        self.dry_run = dry_run if dry_run is not None else not api_key
+        if self.dry_run or OpenAI is None or not api_key:
+            self._client = None
+        else:
+            self._client = OpenAI(api_key=api_key, base_url=ZEN_BASE_URL)
 
     def run(self, user_prompt: str, max_turns: int = 6) -> str:
         if self.dry_run:
             return f"[dry-run:{self.model}] would respond to: {user_prompt[:120]}..."
 
-        messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        tools = self.connectors.tool_specs()
+        openai_tools = (
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t["description"],
+                        "parameters": t["input_schema"],
+                    },
+                }
+                for t in tools
+            ]
+            if tools
+            else None
+        )
+
         for _ in range(max_turns):
-            response = self._client.messages.create(  # type: ignore[union-attr]
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=self.system_prompt,
-                tools=self.connectors.tool_specs(),  # type: ignore[arg-type]
-                messages=messages,  # type: ignore[arg-type]
-            )
-            messages.append({"role": "assistant", "content": response.content})
+            kwargs: dict[str, Any] = {
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "messages": messages,
+            }
+            if openai_tools:
+                kwargs["tools"] = openai_tools
 
-            if response.stop_reason != "tool_use":
-                return "".join(b.text for b in response.content if hasattr(b, "text"))
+            response = self._client.chat.completions.create(**kwargs)  # type: ignore[union-attr]
+            choice = response.choices[0]
 
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = self.connectors.call(block.name, **block.input)  # type: ignore[union-attr]
-                    tool_results.append(
+            if choice.message.tool_calls:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": choice.message.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in choice.message.tool_calls
+                        ],
+                    }
+                )
+
+                import json
+
+                for tc in choice.message.tool_calls:
+                    args = json.loads(tc.function.arguments)
+                    result = self.connectors.call(tc.function.name, **args)
+                    messages.append(
                         {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,  # type: ignore[union-attr]
+                            "role": "tool",
+                            "tool_call_id": tc.id,
                             "content": result,
                         }
                     )
-            messages.append({"role": "user", "content": tool_results})  # type: ignore[dict-item]
+            else:
+                return choice.message.content or ""
 
         return "stopped: max turns reached without a final answer"

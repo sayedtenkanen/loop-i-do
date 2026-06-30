@@ -1,6 +1,6 @@
 """Tests for Agent class with dry-run and tool-use support."""
 
-from loop_engineering.agent import Agent
+from loop_engineering.agent import DEFAULT_MODEL, Agent
 from loop_engineering.connectors import ConnectorRegistry
 
 
@@ -13,7 +13,7 @@ class TestAgentDryRun:
         agent = Agent(system_prompt="You are a test agent.")
         result = agent.run("Do something")
         assert "[dry-run:" in result
-        assert "claude-sonnet-5" in result
+        assert DEFAULT_MODEL in result
 
     def test_explicit_dry_run(self):
         agent = Agent(system_prompt="Test", dry_run=True)
@@ -22,7 +22,10 @@ class TestAgentDryRun:
     def test_explicit_not_dry_run(self):
         agent = Agent(system_prompt="Test", dry_run=False)
         assert agent.dry_run is False
-        # Client may or may not be None depending on ANTHROPIC_API_KEY
+
+    def test_custom_model(self):
+        agent = Agent(system_prompt="Test", model="gpt-5-nano")
+        assert agent.model == "gpt-5-nano"
 
 
 class TestAgentWithConnectors:
