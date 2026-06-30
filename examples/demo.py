@@ -1,5 +1,7 @@
 """Demo wiring for the loop_engineering package."""
 
+import os
+
 from loop_engineering import (
     ConnectorRegistry,
     GoalLoop,
@@ -29,6 +31,9 @@ def open_pull_request(branch: str, title: str, body: str) -> str:
 
 
 def main() -> None:
+    api_key = os.environ.get("OPENCODE_ZEN_API_KEY")
+    print(f"API key set: {'Yes' if api_key else 'No'}")
+
     memory = Memory("demo_state.json")
     finding_id = memory.add_finding({"title": "flaky test in test/auth/test_login.py"})
     print("open findings:", memory.open_findings())
@@ -39,16 +44,15 @@ def main() -> None:
 
     mc = MakerChecker(
         maker_system_prompt=(
-            "You fix flaky tests.\nProject conventions:\n"
-            f"{matched.instructions if matched else ''}"
+            f"You fix flaky tests.\nProject conventions:\n{matched.instructions if matched else ''}"
         ),
         checker_system_prompt="You review test fixes for correctness.",
         connectors=registry,
     )
     draft, review = mc.run("Fix the flaky test in test/auth/test_login.py")
-    print("\nmaker draft:", draft)
+    print("\nmaker draft:", draft[:200] + "..." if len(draft) > 200 else draft)
     print("checker verdict approved:", review.approved)
-    print("checker notes:", review.notes)
+    print("checker notes:", review.notes[:200] + "..." if len(review.notes) > 200 else review.notes)
 
     goal = GoalLoop(worker_system_prompt="You write code to satisfy a goal.", connectors=registry)
     result = goal.run(
@@ -56,7 +60,7 @@ def main() -> None:
         stop_condition="all tests in test/auth pass and lint is clean",
         max_iterations=3,
     )
-    print("\ngoal loop transcript:", result)
+    print("\ngoal loop transcript:", result[:300] + "..." if len(result) > 300 else result)
 
     memory.update_finding(finding_id, status="shipped" if review.approved else "needs_human")
     print("\nfinal memory state:", memory.all_findings())

@@ -72,6 +72,10 @@ class Agent:
                 kwargs["tools"] = openai_tools
 
             response = self._client.chat.completions.create(**kwargs)  # type: ignore[union-attr]
+
+            if not response.choices:
+                return "Error: No response from model"
+
             choice = response.choices[0]
 
             if choice.message.tool_calls:
