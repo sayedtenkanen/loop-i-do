@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from .connectors import ConnectorRegistry
 
 try:
-    from openai import OpenAI
+    from openai import APIStatusError, APITimeoutError, OpenAI
 except ImportError:
     OpenAI = None  # type: ignore[assignment,misc]
+    APITimeoutError = Exception  # type: ignore[misc,assignment]
+    APIStatusError = Exception  # type: ignore[misc,assignment]
 
 ZEN_BASE_URL = "https://opencode.ai/zen/v1"
 DEFAULT_MODEL = "nemotron-3-ultra-free"
@@ -24,17 +27,26 @@ class Agent:
         connectors: ConnectorRegistry | None = None,
         max_tokens: int = 2048,
         dry_run: bool | None = None,
+        timeout: float = 60.0,
+        max_retries: int = 3,
     ):
         self.system_prompt = system_prompt
         self.model = model
         self.connectors = connectors or ConnectorRegistry()
         self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.max_retries = max_retries
         api_key = os.environ.get("OPENCODE_ZEN_API_KEY")
         self.dry_run = dry_run if dry_run is not None else not api_key
         if self.dry_run or OpenAI is None or not api_key:
             self._client = None
         else:
-            self._client = OpenAI(api_key=api_key, base_url=ZEN_BASE_URL)
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url=ZEN_BASE_URL,
+                timeout=self.timeout,
+                max_retries=0,
+            )
 
     def run(self, user_prompt: str, max_turns: int = 6) -> str:
         if self.dry_run:
@@ -62,6 +74,28 @@ class Agent:
             else None
         )
 
+        for attempt in range(self.max_retries):
+            try:
+                return self._run_loop(messages, openai_tools, max_turns)
+            except APITimeoutError:
+                if attempt < self.max_retries - 1:
+                    time.sleep(2**attempt)
+                    continue
+                raise
+            except APIStatusError as e:
+                if e.status_code >= 500 and attempt < self.max_retries - 1:
+                    time.sleep(2**attempt)
+                    continue
+                raise
+
+        return f"Error: API timeout after {self.max_retries} retries"
+
+    def _run_loop(
+        self,
+        messages: list[dict[str, Any]],
+        openai_tools: list[dict] | None,
+        max_turns: int,
+    ) -> str:
         for _ in range(max_turns):
             kwargs: dict[str, Any] = {
                 "model": self.model,
