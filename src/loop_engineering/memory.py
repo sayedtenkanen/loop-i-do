@@ -1,112 +1,56 @@
-"""MemoryLayer for persisting loop state."""
+"""Memory — the loop's spine (article's 6th building block)."""
+
+from __future__ import annotations
 
 import json
-import sqlite3
-from dataclasses import dataclass
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
 
 
-@dataclass
-class LoopState:
-    """State of a loop execution."""
+class Memory:
+    def __init__(self, path: str | Path = "loop_state.json"):
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        if not self.path.exists():
+            self._write({"findings": [], "log": []})
 
-    loop_id: str
-    status: str
-    task: str
-    attempts: int = 0
-    result: dict | None = None
-    error: str | None = None
+    def _read(self) -> dict[str, list[dict[str, str]]]:
+        return json.loads(self.path.read_text())
 
+    def _write(self, data: dict) -> None:
+        self.path.write_text(json.dumps(data, indent=2, default=str))
 
-class MemoryLayer:
-    """SQLite-backed memory for loop state."""
+    def add_finding(self, finding: dict) -> str:
+        with self._lock:
+            data = self._read()
+            finding = {
+                "id": f"f-{len(data['findings']) + 1}",
+                "status": "open",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                **finding,
+            }
+            data["findings"].append(finding)
+            self._write(data)
+            return finding["id"]
 
-    def __init__(self, db_path: str = "loop_state.db"):
-        self.db_path = db_path
-        self._init_db()
+    def update_finding(self, finding_id: str, **updates) -> None:
+        with self._lock:
+            data = self._read()
+            for f in data["findings"]:
+                if f["id"] == finding_id:
+                    f.update(updates)
+                    f["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._write(data)
 
-    def _init_db(self):
-        """Initialize database tables."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS loop_states (
-                loop_id TEXT PRIMARY KEY,
-                status TEXT,
-                task TEXT,
-                attempts INTEGER,
-                result TEXT,
-                error TEXT
-            )
-            """
-        )
-        conn.commit()
-        conn.close()
+    def open_findings(self) -> list[dict]:
+        return [f for f in self._read()["findings"] if f["status"] == "open"]
 
-    def save(self, state: LoopState):
-        """Save loop state."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO loop_states
-            (loop_id, status, task, attempts, result, error)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                state.loop_id,
-                state.status,
-                state.task,
-                state.attempts,
-                json.dumps(state.result) if state.result else None,
-                state.error,
-            ),
-        )
-        conn.commit()
-        conn.close()
+    def all_findings(self) -> list[dict]:
+        return self._read()["findings"]
 
-    def load(self, loop_id: str) -> LoopState | None:
-        """Load loop state by ID."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute("SELECT * FROM loop_states WHERE loop_id = ?", (loop_id,))
-        row = cursor.fetchone()
-        conn.close()
-
-        if row is None:
-            return None
-
-        return LoopState(
-            loop_id=row[0],
-            status=row[1],
-            task=row[2],
-            attempts=row[3],
-            result=json.loads(row[4]) if row[4] else None,
-            error=row[5],
-        )
-
-    def update_status(self, loop_id: str, status: str):
-        """Update loop status."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            "UPDATE loop_states SET status = ? WHERE loop_id = ?",
-            (status, loop_id),
-        )
-        conn.commit()
-        conn.close()
-
-    def list_loops(self) -> list[LoopState]:
-        """List all loops."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute("SELECT * FROM loop_states")
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [
-            LoopState(
-                loop_id=row[0],
-                status=row[1],
-                task=row[2],
-                attempts=row[3],
-                result=json.loads(row[4]) if row[4] else None,
-                error=row[5],
-            )
-            for row in rows
-        ]
+    def log(self, message: str) -> None:
+        with self._lock:
+            data = self._read()
+            data["log"].append({"ts": datetime.now(timezone.utc).isoformat(), "message": message})
+            self._write(data)

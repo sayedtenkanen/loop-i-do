@@ -1,75 +1,62 @@
-"""Loop class for orchestrating agent tasks."""
+"""Loop — wires the six building blocks together."""
 
-from dataclasses import dataclass
+from __future__ import annotations
 
-from loop_engineering.agent import Agent
-from loop_engineering.verifier import Verifier
+from pathlib import Path
 
-
-@dataclass
-class LoopResult:
-    """Result of a loop execution."""
-
-    success: bool
-    output: dict | None
-    attempts: int
-    tokens_used: int
-    error: str | None = None
+from .connectors import ConnectorRegistry
+from .memory import Memory
+from .skills import SkillRegistry
+from .subagents import MakerChecker
+from .worktrees import WorktreeManager
 
 
 class Loop:
-    """Orchestrates an agent to complete a task with verification."""
-
     def __init__(
         self,
-        name: str,
-        task: str,
-        agent: Agent,
-        verifier: Verifier,
-        max_retries: int = 3,
-        criteria: dict | None = None,
+        repo_path: str,
+        memory_path: str = "loop_state.json",
+        skills_dir: str = "skills",
+        connectors: ConnectorRegistry | None = None,
     ):
-        self.name = name
-        self.task = task
-        self.agent = agent
-        self.verifier = verifier
-        self.max_retries = max_retries
-        self.criteria = criteria or {"tests_pass": True}
+        self.repo_path = Path(repo_path)
+        self.memory = Memory(memory_path)
+        self.skills = SkillRegistry(skills_dir)
+        self.worktrees = WorktreeManager(repo_path)
+        self.connectors = connectors or ConnectorRegistry()
 
-    def execute(self) -> LoopResult:
-        """Execute the loop with retries.
+    def handle_finding(self, finding: dict) -> None:
+        skill = self.skills.match(finding.get("title", ""))
+        guidance = skill.instructions if skill else ""
 
-        Returns:
-            LoopResult with success status and output.
-        """
-        total_tokens = 0
-        last_error = None
-
-        for attempt in range(1, self.max_retries + 1):
-            # Execute the task
-            agent_result = self.agent.execute(self.task)
-            total_tokens += agent_result.get("tokens_used", 0)
-
-            # Verify the result
-            verification = self.verifier.verify(
-                agent_result.get("response", ""),
-                criteria=self.criteria,
+        worktree_path = self.worktrees.create(branch_prefix="loop")
+        try:
+            maker_checker = MakerChecker(
+                maker_system_prompt=(
+                    f"You are working inside {worktree_path}. Project conventions:\n{guidance}"
+                ),
+                checker_system_prompt=(
+                    "You are a strict reviewer. Check the proposed change "
+                    f"against these project conventions:\n{guidance}"
+                ),
+                connectors=self.connectors,
             )
+            task = f"Fix: {finding['title']}"
+            draft, review = maker_checker.run(task)
 
-            if verification.passed:
-                return LoopResult(
-                    success=True,
-                    output=agent_result,
-                    attempts=attempt,
-                    tokens_used=total_tokens,
+            if review.approved:
+                self.connectors.call(
+                    "open_pull_request",
+                    branch=worktree_path.name,
+                    title=finding["title"],
+                    body=draft,
                 )
+                self.memory.update_finding(finding["id"], status="shipped", notes=review.notes)
+            else:
+                self.memory.update_finding(finding["id"], status="needs_human", notes=review.notes)
+        finally:
+            self.worktrees.remove(worktree_path)
 
-            last_error = f"Verification failed: {', '.join(verification.issues)}"
-
-        return LoopResult(
-            success=False,
-            output=None,
-            attempts=self.max_retries,
-            tokens_used=total_tokens,
-            error=last_error,
-        )
+    def tick(self) -> None:
+        for finding in self.memory.open_findings():
+            self.handle_finding(finding)

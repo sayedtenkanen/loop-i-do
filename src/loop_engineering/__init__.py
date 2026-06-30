@@ -1,22 +1,29 @@
-"""Loop Engineering - Automated AI agent orchestration."""
+"""Loop Engineering — Automated AI agent orchestration."""
 
 __version__ = "0.1.0"
 
-from loop_engineering.agent import Agent, AgentConfig
-from loop_engineering.loop import Loop, LoopResult
-from loop_engineering.memory import LoopState, MemoryLayer
-from loop_engineering.token_tracker import TokenTracker, TokenUsage
-from loop_engineering.verifier import VerificationResult, Verifier
+from .agent import Agent
+from .automation import Automation, make_skill_triage
+from .connectors import Connector, ConnectorRegistry
+from .goal import GoalLoop
+from .loop import Loop
+from .memory import Memory
+from .skills import Skill, SkillRegistry
+from .subagents import MakerChecker, ReviewResult
+from .worktrees import WorktreeManager
 
 __all__ = [
     "Agent",
-    "AgentConfig",
+    "Automation",
+    "make_skill_triage",
+    "Connector",
+    "ConnectorRegistry",
+    "GoalLoop",
     "Loop",
-    "LoopResult",
-    "Verifier",
-    "VerificationResult",
-    "TokenTracker",
-    "TokenUsage",
-    "MemoryLayer",
-    "LoopState",
+    "Memory",
+    "Skill",
+    "SkillRegistry",
+    "MakerChecker",
+    "ReviewResult",
+    "WorktreeManager",
 ]
