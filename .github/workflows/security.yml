@@ -53,7 +53,7 @@ jobs:
       - name: detect-secrets
         run: |
           pip install detect-secrets>=1.4.0
-          detect-secrets scan --all-files --exclude-files '\.venv/' -o secrets-report.json || true
+          detect-secrets scan --all-files --exclude-files '\.venv/' > secrets-report.json || true
           echo "=== Secrets Report ==="
           cat secrets-report.json | python -m json.tool
           if [ "$(python -c "import json; d=json.load(open('secrets-report.json')); print(len(d.get('results', {})))")" != "0" ]; then
